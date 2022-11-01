@@ -2,6 +2,7 @@
   "name": "react-native-camera-kit",
   "repository": {
     "type": "git",
+    "url": "https://github.com/lvt263/react-native-camera-kit.git"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
