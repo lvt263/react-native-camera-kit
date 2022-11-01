@@ -1085,7 +1085,7 @@ didOutputMetadataObjects:(NSArray<__kindof AVMetadataObject *> *)metadataObjects
             AVMetadataMachineReadableCodeObject *code = (AVMetadataMachineReadableCodeObject*)[self.previewLayer transformedMetadataObjectForMetadataObject:metadataObject];
             if (self.onReadCode && code.stringValue && ![code.stringValue isEqualToString:self.codeStringValue]) {
                 if([metadataObject.type isEqualToString:AVMetadataObjectTypeEAN13Code]){
-                    if ([code.stringValue hasPrefix:@"0"] && [code.stringValue length] > 1){
+                    if ([code.stringValue hasPrefix:@"00"] && [code.stringValue length] == 13){
                         self.onReadCode(@{@"codeStringValue": [code.stringValue substringFromIndex:1]});
                     }else{
                         self.onReadCode(@{@"codeStringValue": code.stringValue});
