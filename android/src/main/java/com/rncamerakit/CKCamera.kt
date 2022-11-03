@@ -7,11 +7,13 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Color
+import android.content.res.Configuration
+import android.graphics.*
 import android.hardware.SensorManager
 import android.media.AudioManager
 import android.media.MediaActionSound
 import android.net.Uri
+import android.util.AttributeSet
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.*
@@ -20,6 +22,7 @@ import android.widget.LinearLayout
 import androidx.annotation.ColorInt
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
+import androidx.camera.core.Camera
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
@@ -30,6 +33,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.uimanager.events.RCTEventEmitter
+import com.google.mlkit.vision.barcode.common.Barcode
 import com.rncamerakit.barcode.BarcodeFrame
 import java.io.File
 import java.util.*
@@ -38,24 +42,38 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.RectF
 
-class RectOverlay constructor(context: Context) :
-        View(context) {
+class RectOverlay @JvmOverloads constructor(
+        context: Context,
+        attrs: AttributeSet? = null,
+        defStyleAttr: Int = -1
+) : View(context, attrs, defStyleAttr) {
 
-    private val rectBounds: MutableList<RectF> = mutableListOf()
-    private val paint = Paint().apply {
-        style = Paint.Style.STROKE
-        color = ContextCompat.getColor(context, android.R.color.holo_green_light)
-        strokeWidth = 5f
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.RED
+        style = Paint.Style.FILL
     }
+
+    private var barcodes = listOf<Barcode>()
+    private var scaleFactorX = 1.0f
+    private var scaleFactorY = 1.0f
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         // Pass it a list of RectF (rectBounds)
         rectBounds.forEach { canvas.drawRect(it, paint) }
+
+        canvas.apply {
+            for (barcode in barcodes) {
+                barcode.boundingBox?.let { boundingBox ->
+                    val rect = translateRect(boundingBox)
+                    val cx = rect.left + (rect.right - rect.left) / 2
+                    val cy = rect.top + (rect.bottom - rect.top) / 2
+                    val radius = 16.0f
+                    drawCircle(cx, cy, radius, paint)
+                }
+            }
+        }
     }
 
     fun drawRectBounds(rectBounds: List<RectF>) {
@@ -63,10 +81,38 @@ class RectOverlay constructor(context: Context) :
         this.rectBounds.addAll(rectBounds)
         invalidate()
         postDelayed({
-          this.rectBounds.clear()
-          invalidate()
+            this.rectBounds.clear()
+            invalidate()
         }, 1000)
     }
+
+
+        fun update(scanResult: ScanResult) {
+        if (isPortraitMode()) {
+            scaleFactorY = height.toFloat() / scanResult.imageWidth
+            scaleFactorX = width.toFloat() / scanResult.imageHeight
+        } else {
+            scaleFactorY = height.toFloat() / scanResult.imageHeight
+            scaleFactorX = width.toFloat() / scanResult.imageWidth
+        }
+        barcodes = scanResult.barcodes
+        invalidate()
+    }
+
+    private fun isPortraitMode(): Boolean {
+        val orientation: Int = resources.configuration.orientation
+        return orientation == Configuration.ORIENTATION_PORTRAIT
+    }
+
+    private fun translateX(x: Float): Float = x * scaleFactorX
+    private fun translateY(y: Float): Float = y * scaleFactorY
+
+    private fun translateRect(rect: Rect) = RectF(
+            translateX(rect.left.toFloat()),
+            translateY(rect.top.toFloat()),
+            translateX(rect.right.toFloat()),
+            translateY(rect.bottom.toFloat())
+    )
 }
 
 @SuppressLint("ViewConstructor") // Extra constructors unused. Not using visual layout tools
@@ -79,7 +125,7 @@ class CKCamera(context: ThemedReactContext) : FrameLayout(context), LifecycleObs
     private var imageAnalyzer: ImageAnalysis? = null
     private var orientationListener: OrientationEventListener? = null
     private var viewFinder: PreviewView = PreviewView(context)
-    private var rectOverlay: RectOverlay = RectOverlay(context)
+    private var rectOverlay: BarcodeOverlay = BarcodeOverlay(context)
     private var barcodeFrame: BarcodeFrame? = null
     private var cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var cameraProvider: ProcessCameraProvider? = null
@@ -97,7 +143,7 @@ class CKCamera(context: ThemedReactContext) : FrameLayout(context), LifecycleObs
     private var frameColor = Color.GREEN
     private var laserColor = Color.RED
 
-    private fun getActivity() : Activity {
+    private fun getActivity(): Activity {
         return currentContext.currentActivity!!
     }
 
@@ -179,7 +225,7 @@ class CKCamera(context: ThemedReactContext) : FrameLayout(context), LifecycleObs
             }
             orientationListener!!.enable()
 
-            val scaleDetector =  ScaleGestureDetector(context, object: ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 override fun onScale(detector: ScaleGestureDetector?): Boolean {
                     if (zoomMode == "off") return true
                     val cameraControl = camera?.cameraControl ?: return true
@@ -249,10 +295,18 @@ class CKCamera(context: ThemedReactContext) : FrameLayout(context), LifecycleObs
         val useCases = mutableListOf(preview, imageCapture)
 
         if (scanBarcode) {
-            val analyzer = QRCodeAnalyzer { barcodes ->
-                if (barcodes.isNotEmpty()) {
-                    onBarcodeRead(barcodes)
+            val analyzer = BarcodeAnalyzer { barcodes ->
+//                rectOverlay.update(barcodes)
+                barcodes.barcodes.forEach { barcode ->
+                    val r = rectOverlay.translateRect(barcode.boundingBox!!)
+                    val rf = RectF(barcodeFrame!!.frameRect)
+                    if (rf.contains(r)) {
+                        onBarcodeRead(barcode)
+                        Log.d("barcode center", barcode.rawValue.toString())
+                        return@forEach
+                    }
                 }
+
             }
             imageAnalyzer!!.setAnalyzer(cameraExecutor, analyzer)
             useCases.add(imageAnalyzer)
@@ -323,8 +377,8 @@ class CKCamera(context: ThemedReactContext) : FrameLayout(context), LifecycleObs
 
         val outputFile = File(outputPath)
         val outputOptions = ImageCapture.OutputFileOptions
-                    .Builder(outputFile)
-                    .build()
+                .Builder(outputFile)
+                .build()
 
         flashViewFinder()
 
@@ -381,172 +435,231 @@ class CKCamera(context: ThemedReactContext) : FrameLayout(context), LifecycleObs
         if (autoFocus == "off") builder.disableAutoCancel()
 
         camera?.cameraControl?.startFocusAndMetering(builder.build())
-        val focusRects = listOf(RectF(x-75, y-75, x+75, y+75))
+        val focusRects = listOf(RectF(x - 75, y - 75, x + 75, y + 75))
         rectOverlay.drawRectBounds(focusRects)
     }
 
-    private fun onBarcodeRead(barcodes: List<String>) {
+    private fun onBarcodeRead(barcode: Barcode) {
         val event: WritableMap = Arguments.createMap()
-        event.putString("codeStringValue", barcodes.first())
+
+
+        event.putString("codeStringValue", barcode.rawValue)
         currentContext.getJSModule(RCTEventEmitter::class.java).receiveEvent(
                 id,
-                "onReadCode",
-                event
-        )
+                "onReadCode", event)
     }
 
-    private fun onOrientationChange(orientation: Int) {
-        val remappedOrientation = when (orientation) {
-            Surface.ROTATION_0 -> RNCameraKitModule.PORTRAIT
-            Surface.ROTATION_90 -> RNCameraKitModule.LANDSCAPE_LEFT
-            Surface.ROTATION_180 -> RNCameraKitModule.PORTRAIT_UPSIDE_DOWN
-            Surface.ROTATION_270 -> RNCameraKitModule.LANDSCAPE_RIGHT
-            else -> {
-                Log.e(TAG, "CameraView: Unknown device orientation detected: $orientation")
-                return
+
+private fun onOrientationChange(orientation: Int) {
+    val remappedOrientation = when (orientation) {
+        Surface.ROTATION_0 -> RNCameraKitModule.PORTRAIT
+        Surface.ROTATION_90 -> RNCameraKitModule.LANDSCAPE_LEFT
+        Surface.ROTATION_180 -> RNCameraKitModule.PORTRAIT_UPSIDE_DOWN
+        Surface.ROTATION_270 -> RNCameraKitModule.LANDSCAPE_RIGHT
+        else -> {
+            Log.e(TAG, "CameraView: Unknown device orientation detected: $orientation")
+            return
+        }
+    }
+
+    val event: WritableMap = Arguments.createMap()
+    event.putInt("orientation", remappedOrientation)
+    currentContext.getJSModule(RCTEventEmitter::class.java).receiveEvent(
+            id,
+            "onOrientationChange",
+            event
+    )
+}
+
+private fun onPictureTaken(uri: String) {
+    val event: WritableMap = Arguments.createMap()
+    event.putString("uri", uri)
+    currentContext.getJSModule(RCTEventEmitter::class.java).receiveEvent(
+            id,
+            "onPictureTaken",
+            event
+    )
+}
+
+fun setFlashMode(mode: String?) {
+    val imageCapture = imageCapture ?: return
+    val camera = camera ?: return
+    when (mode) {
+        "on" -> {
+            camera.cameraControl.enableTorch(false)
+            imageCapture.flashMode = ImageCapture.FLASH_MODE_ON
+        }
+        "off" -> {
+            camera.cameraControl.enableTorch(false)
+            imageCapture.flashMode = ImageCapture.FLASH_MODE_OFF
+        }
+        else -> { // 'auto' and any wrong values
+            imageCapture.flashMode = ImageCapture.FLASH_MODE_AUTO
+            camera.cameraControl.enableTorch(false)
+        }
+    }
+}
+
+fun setTorchMode(mode: String?) {
+    val camera = camera ?: return
+    when (mode) {
+        "on" -> {
+            camera.cameraControl.enableTorch(true)
+        }
+        "off" -> {
+            camera.cameraControl.enableTorch(false)
+        }
+        else -> { // 'auto' and any wrong values
+            camera.cameraControl.enableTorch(false)
+        }
+    }
+}
+
+fun setAutoFocus(mode: String = "on") {
+    autoFocus = mode
+    when (mode) {
+        // "cancel" clear AF points and engages continuous auto-focus
+        "on" -> camera?.cameraControl?.cancelFocusAndMetering()
+        // 'off': Handled when you tap to focus
+    }
+}
+
+fun setZoomMode(mode: String = "on") {
+    zoomMode = mode
+}
+
+fun setScanBarcode(enabled: Boolean) {
+    val restartCamera = enabled != scanBarcode
+    scanBarcode = enabled
+    if (restartCamera) bindCameraUseCases()
+}
+
+fun setCameraType(type: String = "back") {
+    val newLensType = when (type) {
+        "front" -> CameraSelector.LENS_FACING_FRONT
+        else -> CameraSelector.LENS_FACING_BACK
+    }
+    val restartCamera = lensType != newLensType
+    lensType = newLensType
+    if (restartCamera) bindCameraUseCases()
+}
+
+fun setOutputPath(path: String) {
+    outputPath = path
+}
+
+fun setShowFrame(enabled: Boolean) {
+    if (enabled) {
+        barcodeFrame = BarcodeFrame(context)
+        val actualPreviewWidth = resources.displayMetrics.widthPixels
+        val actualPreviewHeight = resources.displayMetrics.heightPixels
+        val height: Int = convertDeviceHeightToSupportedAspectRatio(actualPreviewWidth, actualPreviewHeight)
+        barcodeFrame!!.setFrameColor(frameColor)
+        barcodeFrame!!.setLaserColor(laserColor)
+        (barcodeFrame as View).layout(0, 0, actualPreviewWidth, height)
+        addView(barcodeFrame)
+    } else if (barcodeFrame != null) {
+        removeView(barcodeFrame)
+        barcodeFrame = null
+    }
+}
+
+fun setLaserColor(@ColorInt color: Int) {
+    laserColor = color
+    if (barcodeFrame != null) {
+        barcodeFrame!!.setLaserColor(laserColor)
+    }
+}
+
+fun setFrameColor(@ColorInt color: Int) {
+    frameColor = color
+    if (barcodeFrame != null) {
+        barcodeFrame!!.setFrameColor(color)
+    }
+}
+
+private fun convertDeviceHeightToSupportedAspectRatio(actualWidth: Int, actualHeight: Int): Int {
+    val maxScreenRatio = 16 / 9f
+    return (if (actualHeight / actualWidth > maxScreenRatio) actualWidth * maxScreenRatio else actualHeight).toInt()
+}
+
+private fun hasPermissions(): Boolean {
+    val requiredPermissions = arrayOf(Manifest.permission.CAMERA)
+    if (requiredPermissions.all {
+                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+            }) {
+        return true
+    }
+    ActivityCompat.requestPermissions(
+            getActivity(),
+            requiredPermissions,
+            42 // random callback identifier
+    )
+    return false
+}
+
+companion object {
+
+    private const val TAG = "CameraKit"
+    private const val RATIO_4_3_VALUE = 4.0 / 3.0
+    private const val RATIO_16_9_VALUE = 16.0 / 9.0
+}
+}
+
+class BarcodeOverlay @JvmOverloads constructor(
+        context: Context,
+        attrs: AttributeSet? = null,
+        defStyleAttr: Int = -1
+) : View(context, attrs, defStyleAttr) {
+
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.RED
+        style = Paint.Style.FILL
+    }
+
+    private var barcodes = listOf<Barcode>()
+    private var scaleFactorX = 1.0f
+    private var scaleFactorY = 1.0f
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        canvas.apply {
+            for (barcode in barcodes) {
+                barcode.boundingBox?.let { boundingBox ->
+                    val rect = translateRect(boundingBox)
+                    val cx = rect.left + (rect.right - rect.left) / 2
+                    val cy = rect.top + (rect.bottom - rect.top) / 2
+                    val radius = 16.0f
+                    drawCircle(cx, cy, radius, paint)
+                }
             }
         }
-
-        val event: WritableMap = Arguments.createMap()
-        event.putInt("orientation", remappedOrientation)
-        currentContext.getJSModule(RCTEventEmitter::class.java).receiveEvent(
-                id,
-                "onOrientationChange",
-                event
-        )
     }
 
-    private fun onPictureTaken(uri: String) {
-        val event: WritableMap = Arguments.createMap()
-        event.putString("uri", uri)
-        currentContext.getJSModule(RCTEventEmitter::class.java).receiveEvent(
-                id,
-                "onPictureTaken",
-                event
-        )
-    }
-
-    fun setFlashMode(mode: String?) {
-        val imageCapture = imageCapture ?: return
-        val camera = camera ?: return
-        when (mode) {
-            "on" -> {
-                camera.cameraControl.enableTorch(false)
-                imageCapture.flashMode = ImageCapture.FLASH_MODE_ON
-            }
-            "off" -> {
-                camera.cameraControl.enableTorch(false)
-                imageCapture.flashMode = ImageCapture.FLASH_MODE_OFF
-            }
-            else -> { // 'auto' and any wrong values
-                imageCapture.flashMode = ImageCapture.FLASH_MODE_AUTO
-                camera.cameraControl.enableTorch(false)
-            }
+    fun update(scanResult: ScanResult) {
+        if (isPortraitMode()) {
+            scaleFactorY = height.toFloat() / scanResult.imageWidth
+            scaleFactorX = width.toFloat() / scanResult.imageHeight
+        } else {
+            scaleFactorY = height.toFloat() / scanResult.imageHeight
+            scaleFactorX = width.toFloat() / scanResult.imageWidth
         }
+        barcodes = scanResult.barcodes
+        invalidate()
     }
 
-    fun setTorchMode(mode: String?) {
-        val camera = camera ?: return
-        when (mode) {
-            "on" -> {
-                camera.cameraControl.enableTorch(true)
-            }
-            "off" -> {
-                camera.cameraControl.enableTorch(false)
-            }
-            else -> { // 'auto' and any wrong values
-                camera.cameraControl.enableTorch(false)
-            }
-        }
+    private fun isPortraitMode(): Boolean {
+        val orientation: Int = resources.configuration.orientation
+        return orientation == Configuration.ORIENTATION_PORTRAIT
     }
 
-    fun setAutoFocus(mode: String = "on") {
-        autoFocus = mode
-        when(mode) {
-            // "cancel" clear AF points and engages continuous auto-focus
-            "on" -> camera?.cameraControl?.cancelFocusAndMetering()
-            // 'off': Handled when you tap to focus
-        }
-    }
+    private fun translateX(x: Float): Float = x * scaleFactorX
+    private fun translateY(y: Float): Float = y * scaleFactorY
 
-    fun setZoomMode(mode: String = "on") {
-        zoomMode = mode
-    }
-
-    fun setScanBarcode(enabled: Boolean) {
-        val restartCamera = enabled != scanBarcode
-        scanBarcode = enabled
-        if (restartCamera) bindCameraUseCases()
-    }
-
-    fun setCameraType(type: String = "back") {
-        val newLensType = when (type) {
-            "front" -> CameraSelector.LENS_FACING_FRONT
-            else -> CameraSelector.LENS_FACING_BACK
-        }
-        val restartCamera = lensType != newLensType
-        lensType = newLensType
-        if (restartCamera) bindCameraUseCases()
-    }
-
-    fun setOutputPath(path: String) {
-        outputPath = path
-    }
-
-    fun setShowFrame(enabled: Boolean) {
-        if (enabled) {
-            barcodeFrame = BarcodeFrame(context)
-            val actualPreviewWidth = resources.displayMetrics.widthPixels
-            val actualPreviewHeight = resources.displayMetrics.heightPixels
-            val height: Int = convertDeviceHeightToSupportedAspectRatio(actualPreviewWidth, actualPreviewHeight)
-            barcodeFrame!!.setFrameColor(frameColor)
-            barcodeFrame!!.setLaserColor(laserColor)
-            (barcodeFrame as View).layout(0, 0, actualPreviewWidth, height)
-            addView(barcodeFrame)
-        } else if (barcodeFrame != null) {
-            removeView(barcodeFrame)
-            barcodeFrame = null
-        }
-    }
-
-    fun setLaserColor(@ColorInt color: Int) {
-        laserColor = color
-        if (barcodeFrame != null) {
-            barcodeFrame!!.setLaserColor(laserColor)
-        }
-    }
-
-    fun setFrameColor(@ColorInt color: Int) {
-        frameColor = color
-        if (barcodeFrame != null) {
-            barcodeFrame!!.setFrameColor(color)
-        }
-    }
-
-    private fun convertDeviceHeightToSupportedAspectRatio(actualWidth: Int, actualHeight: Int): Int {
-        val maxScreenRatio = 16 / 9f
-        return (if (actualHeight / actualWidth > maxScreenRatio) actualWidth * maxScreenRatio else actualHeight).toInt()
-    }
-
-    private fun hasPermissions(): Boolean {
-        val requiredPermissions = arrayOf(Manifest.permission.CAMERA)
-        if (requiredPermissions.all {
-                    ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-                }) {
-            return true
-        }
-        ActivityCompat.requestPermissions(
-                getActivity(),
-                requiredPermissions,
-                42 // random callback identifier
-        )
-        return false
-    }
-
-    companion object {
-
-        private const val TAG = "CameraKit"
-        private const val RATIO_4_3_VALUE = 4.0 / 3.0
-        private const val RATIO_16_9_VALUE = 16.0 / 9.0
-    }
+    fun translateRect(rect: Rect) = RectF(
+            translateX(rect.left.toFloat()),
+            translateY(rect.top.toFloat()),
+            translateX(rect.right.toFloat()),
+            translateY(rect.bottom.toFloat())
+    )
 }
