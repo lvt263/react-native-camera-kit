@@ -554,6 +554,7 @@ class BarcodeOverlay @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        rectBounds.forEach { canvas.drawRect(it, paint) }
         canvas.apply {
             for (barcode in barcodes) {
                 barcode.boundingBox?.let { boundingBox ->
