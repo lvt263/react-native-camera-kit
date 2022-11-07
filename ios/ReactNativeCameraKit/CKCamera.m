@@ -361,12 +361,12 @@ RCT_ENUM_CONVERTER(CKCameraZoomMode, (@{
         
         AVCaptureMovieFileOutput *movieFileOutput = [[AVCaptureMovieFileOutput alloc] init];
         if ( [self.session canAddOutput:movieFileOutput] ) {
-            [self.session addOutput:movieFileOutput];
-            AVCaptureConnection *connection = [movieFileOutput connectionWithMediaType:AVMediaTypeVideo];
-            if ( connection.isVideoStabilizationSupported ) {
-                connection.preferredVideoStabilizationMode = AVCaptureVideoStabilizationModeAuto;
-            }
-            self.movieFileOutput = movieFileOutput;
+//            [self.session addOutput:movieFileOutput];
+//            AVCaptureConnection *connection = [movieFileOutput connectionWithMediaType:AVMediaTypeVideo];
+//            if ( connection.isVideoStabilizationSupported ) {
+//                connection.preferredVideoStabilizationMode = AVCaptureVideoStabilizationModeAuto;
+//            }
+//            self.movieFileOutput = movieFileOutput;
         }
         else {
             self.setupResult = CKSetupResultSessionConfigurationFailed;
