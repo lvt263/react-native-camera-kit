@@ -4,8 +4,8 @@ import android.content.Context
 import android.graphics.*
 import android.view.View
 import androidx.annotation.ColorInt
-
 import com.rncamerakit.R
+
 
 class BarcodeFrame(context: Context) : View(context) {
     private var borderPaint: Paint = Paint()
@@ -49,6 +49,52 @@ class BarcodeFrame(context: Context) : View(context) {
     }
 
     private fun drawBorder(canvas: Canvas) {
+        // set up some constants
+        // set up some constants
+        val w = canvas.width
+        val h = canvas.height
+        // same constants as above except innerRectFillColor is not used. Instead:
+        // same constants as above except innerRectFillColor is not used. Instead:
+        val outerFillColor = 0x77000000
+
+        // first create an off-screen bitmap and its canvas
+
+        // first create an off-screen bitmap and its canvas
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val auxCanvas = Canvas(bitmap)
+
+        // then fill the bitmap with the desired outside color
+
+        // then fill the bitmap with the desired outside color
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = outerFillColor
+        paint.style = Paint.Style.FILL
+        auxCanvas.drawPaint(paint)
+
+        // then punch a transparent hole in the shape of the rect
+        val rect = RectF(frameRect)
+        // then punch a transparent hole in the shape of the rect
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+        auxCanvas.drawRoundRect(
+            rect, 0f,
+            0f, paint
+        )
+
+        // then draw the white rect border (being sure to get rid of the xfer mode!)
+
+        // then draw the white rect border (being sure to get rid of the xfer mode!)
+        paint.xfermode = null
+        paint.color = Color.WHITE
+        paint.style = Paint.Style.STROKE
+        auxCanvas.drawRoundRect(
+            rect, 0f,
+            0f, paint
+        )
+
+        // finally, draw the whole thing to the original canvas
+
+        // finally, draw the whole thing to the original canvas
+        canvas.drawBitmap(bitmap, 0f, 0f , paint)
         canvas.drawLine(frameRect.left.toFloat(), frameRect.top.toFloat(), frameRect.left.toFloat(), (frameRect.top + borderMargin).toFloat(), borderPaint)
         canvas.drawLine(frameRect.left.toFloat(), frameRect.top.toFloat(), (frameRect.left + borderMargin).toFloat(), frameRect.top.toFloat(), borderPaint)
         canvas.drawLine(frameRect.left.toFloat(), frameRect.bottom.toFloat(), frameRect.left.toFloat(), (frameRect.bottom - borderMargin).toFloat(), borderPaint)
