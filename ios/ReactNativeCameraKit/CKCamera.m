@@ -184,7 +184,16 @@ RCT_ENUM_CONVERTER(CKCameraZoomMode, (@{
         [self handleCameraPermission];
         
 #if !(TARGET_IPHONE_SIMULATOR)
-        [self setupCaptureSession];
+        @try {
+            [self setupCaptureSession];
+         }
+         @catch (NSException * e) {
+            NSLog(@"Exception: %@", e);
+         }
+         @finally {
+            NSLog(@"finally");
+         }
+       
 #endif
         self.previewLayer = [[AVCaptureVideoPreviewLayer alloc] initWithSession:self.session];
         [self.layer addSublayer:self.previewLayer];
@@ -351,9 +360,18 @@ RCT_ENUM_CONVERTER(CKCameraZoomMode, (@{
         [self.session beginConfiguration];
         
         if ( [self.session canAddInput:videoDeviceInput] ) {
-            [self.session addInput:videoDeviceInput];
-            self.videoDeviceInput = videoDeviceInput;
-            [CKCamera setFlashMode:self.flashMode forDevice:self.videoDeviceInput.device];
+            @try {
+                [self.session addInput:videoDeviceInput];
+                self.videoDeviceInput = videoDeviceInput;
+                [CKCamera setFlashMode:self.flashMode forDevice:self.videoDeviceInput.device];
+             }
+             @catch (NSException * e) {
+                NSLog(@"Exception: %@", e);
+             }
+             @finally {
+                NSLog(@"finally");
+             }
+            
         }
         else {
             self.setupResult = CKSetupResultSessionConfigurationFailed;
@@ -1123,4 +1141,3 @@ const NSString *isNeedMultipleScanBarcode = @"isNeedMultipleScanBarcode";
 
 
 @end
-
